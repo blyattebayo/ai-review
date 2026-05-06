@@ -13,6 +13,56 @@ T = TypeVar("T", bound=BaseModel)
 CLEAN_JSON_BLOCK_RE = re.compile(r"```(?:json)?(.*?)```", re.DOTALL | re.IGNORECASE)
 
 
+def extract_first_json_object(raw: str) -> str | None:
+    """
+    Extract the first balanced JSON object from mixed LLM output.
+
+    This handles responses like:
+        I will inspect the repo. {"action":"TOOL_CALL","command":"ls"}
+
+    It is intentionally conservative:
+    - starts at the first "{"
+    - tracks nested braces
+    - ignores braces inside JSON strings
+    - respects escaped quotes
+    """
+    text = (raw or "").strip()
+    start = text.find("{")
+    if start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escape = False
+
+    for index in range(start, len(text)):
+        char = text[index]
+
+        if escape:
+            escape = False
+            continue
+
+        if char == "\\" and in_string:
+            escape = True
+            continue
+
+        if char == '"':
+            in_string = not in_string
+            continue
+
+        if in_string:
+            continue
+
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:index + 1]
+
+    return None
+
+
 class LLMOutputJSONParser(Generic[T]):
     """Reusable JSON parser for LLM responses."""
 
@@ -55,6 +105,14 @@ class LLMOutputJSONParser(Generic[T]):
         if parsed := self.try_parse(output):
             logger.info(f"[{self.model_name}] Successfully parsed")
             return parsed
+
+        if object_candidate := extract_first_json_object(output):
+            logger.debug(
+                f"[{self.model_name}] Found JSON object candidate, retrying parse..."
+            )
+            if parsed := self.try_parse(object_candidate):
+                logger.info(f"[{self.model_name}] Successfully parsed extracted JSON object")
+                return parsed
 
         logger.error(f"[{self.model_name}] No valid JSON found in output")
         return None

@@ -9,5 +9,8 @@ RUN apt-get update && \
 RUN git config --global --add safe.directory '*'
 RUN git config --global core.quotepath false
 
-ARG AI_REVIEW_VERSION
-RUN pip install --no-cache-dir xai-review==${AI_REVIEW_VERSION}
+COPY pyproject.toml README.md LICENSE ./
+COPY ai_review ./ai_review
+
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir .
